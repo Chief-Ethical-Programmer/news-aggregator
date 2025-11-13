@@ -1,0 +1,150 @@
+{
+  "name": "Weekly News Summary - Complete",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "cronExpression": "0 18 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM articles \nWHERE rating >= 4 \nAND aggregated_date >= NOW() - INTERVAL '7 days' \nORDER BY rating DESC, aggregated_date DESC",
+        "options": {}
+      },
+      "id": "b2c3d4e5-f6a7-8b9c-0d1e-2f3a4b5c6d7e",
+      "name": "PostgreSQL - Get Top Articles",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        450,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "PostgreSQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const articles = $input.all().map(item => item.json);\n\nif (articles.length === 0) {\n  return [{ json: { noArticles: true } }];\n}\n\n// Group by rating\nconst mustReads = articles.filter(a => a.rating === 5);\nconst important = articles.filter(a => a.rating === 4);\n\n// Group by category\nconst byCategory = {\n  cybersecurity: articles.filter(a => a.category === 'cybersecurity'),\n  ai: articles.filter(a => a.category === 'ai'),\n  tech: articles.filter(a => a.category === 'tech'),\n  general: articles.filter(a => a.category === 'general')\n};\n\n// Extract all keywords\nconst allKeywords = [];\narticles.forEach(a => {\n  try {\n    const keywords = typeof a.keywords === 'string' ? JSON.parse(a.keywords) : a.keywords;\n    allKeywords.push(...keywords);\n  } catch (e) {\n    // Skip invalid JSON\n  }\n});\n\n// Count keyword frequency\nconst keywordCount = {};\nallKeywords.forEach(kw => {\n  keywordCount[kw] = (keywordCount[kw] || 0) + 1;\n});\n\nconst topKeywords = Object.entries(keywordCount)\n  .sort((a, b) => b[1] - a[1])\n  .slice(0, 10)\n  .map(([keyword, count]) => ({ keyword, count }));\n\n// Emerging trends\nconst emergingTrends = topKeywords.slice(0, 5).map(item => item.keyword);\n\n// Top topics by category\nconst topicsByCategory = {};\nObject.keys(byCategory).forEach(cat => {\n  const catKeywords = {};\n  byCategory[cat].forEach(article => {\n    try {\n      const keywords = typeof article.keywords === 'string' ? \n        JSON.parse(article.keywords) : article.keywords;\n      keywords.forEach(kw => {\n        catKeywords[kw] = (catKeywords[kw] || 0) + 1;\n      });\n    } catch (e) {}\n  });\n  topicsByCategory[cat] = Object.entries(catKeywords)\n    .sort((a, b) => b[1] - a[1])\n    .slice(0, 3)\n    .map(([keyword]) => keyword);\n});\n\n// Generate insights\nconst insights = [];\n\nif (byCategory.cybersecurity.length > 0) {\n  const hasVulnerability = byCategory.cybersecurity.some(a => {\n    try {\n      const kw = JSON.parse(a.keywords);\n      return kw.includes('vulnerability') || kw.includes('zero-day') || kw.includes('breach');\n    } catch { return false; }\n  });\n  if (hasVulnerability) {\n    insights.push({\n      category: 'Cybersecurity',\n      insight: 'Critical vulnerabilities reported - review security patches',\n      priority: 'high'\n    });\n  }\n}\n\nif (mustReads.length >= 3) {\n  insights.push({\n    category: 'Overall',\n    insight: `${mustReads.length} critical articles this week - unusually high activity`,\n    priority: 'high'\n  });\n}\n\n// Week dates\nconst weekEnd = new Date();\nconst weekStart = new Date(weekEnd);\nweekStart.setDate(weekStart.getDate() - 7);\n\nreturn [{\n  json: {\n    mustReads,\n    important,\n    byCategory,\n    topKeywords,\n    emergingTrends,\n    topicsByCategory,\n    insights,\n    weekStart: weekStart.toISOString(),\n    weekEnd: weekEnd.toISOString(),\n    totalArticles: articles.length,\n    stats: {\n      fiveStars: mustReads.length,\n      fourStars: important.length,\n      cybersecurity: byCategory.cybersecurity.length,\n      ai: byCategory.ai.length,\n      tech: byCategory.tech.length\n    }\n  }\n}];"
+      },
+      "id": "c3d4e5f6-a7b8-9c0d-1e2f-3a4b5c6d7e8f",
+      "name": "Analyze Trends",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        650,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nif (data.noArticles) {\n  return [{\n    json: {\n      subject: 'Weekly Tech Digest - No High-Priority Articles',\n      body: 'No high-priority articles were found this week.'\n    }\n  }];\n}\n\nconst weekStart = new Date(data.weekStart).toLocaleDateString('en-US', { month: 'long', day: 'numeric' });\nconst weekEnd = new Date(data.weekEnd).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });\n\nlet emailBody = `# 📊 Weekly Tech Digest\\n\\n**${weekStart} - ${weekEnd}**\\n\\n---\\n\\n`;\n\n// Must Reads\nif (data.mustReads.length > 0) {\n  emailBody += `## 🌟 Must Read This Week (${data.mustReads.length} articles)\\n\\n`;\n  data.mustReads.forEach((article, idx) => {\n    emailBody += `### ${idx + 1}. ${article.title}\\n`;\n    emailBody += `**⭐⭐⭐⭐⭐ | ${article.category.toUpperCase()}**\\n\\n`;\n    emailBody += `${article.reasoning}\\n\\n`;\n    emailBody += `[Read Article](${article.url})\\n\\n---\\n\\n`;\n  });\n}\n\n// Strategic Insights\nif (data.insights.length > 0) {\n  emailBody += `## 💡 Strategic Insights\\n\\n`;\n  data.insights.forEach(insight => {\n    const icon = insight.priority === 'high' ? '🔴' : '🟡';\n    emailBody += `${icon} **${insight.category}**: ${insight.insight}\\n\\n`;\n  });\n  emailBody += `\\n`;\n}\n\n// Emerging Trends\nif (data.emergingTrends.length > 0) {\n  emailBody += `## 📈 Emerging Trends\\n\\n`;\n  emailBody += `Key topics this week: **${data.emergingTrends.join(', ')}**\\n\\n`;\n}\n\n// Category Breakdown\nemailBody += `## 📑 This Week by Category\\n\\n`;\n\n['cybersecurity', 'ai', 'tech'].forEach(cat => {\n  const articles = data.byCategory[cat];\n  if (articles.length > 0) {\n    const icon = cat === 'cybersecurity' ? '🔒' : cat === 'ai' ? '🤖' : '💻';\n    const catName = cat === 'ai' ? 'AI/ML' : cat.charAt(0).toUpperCase() + cat.slice(1);\n    \n    emailBody += `### ${icon} ${catName} (${articles.length} articles)\\n`;\n    \n    if (data.topicsByCategory[cat] && data.topicsByCategory[cat].length > 0) {\n      emailBody += `Top topics: ${data.topicsByCategory[cat].join(', ')}\\n\\n`;\n    }\n    \n    articles.slice(0, 5).forEach(article => {\n      emailBody += `- **[${article.rating}⭐]** ${article.title}\\n`;\n    });\n    emailBody += `\\n`;\n  }\n});\n\n// Statistics\nemailBody += `## 📊 Weekly Statistics\\n\\n`;\nemailBody += `- Total High-Priority Articles: **${data.totalArticles}**\\n`;\nemailBody += `- Must-Reads (5⭐): **${data.stats.fiveStars}**\\n`;\nemailBody += `- Important (4⭐): **${data.stats.fourStars}**\\n`;\nemailBody += `- Cybersecurity: **${data.stats.cybersecurity}**\\n`;\nemailBody += `- AI/ML: **${data.stats.ai}**\\n`;\nemailBody += `- Tech: **${data.stats.tech}**\\n\\n`;\n\n// Top Keywords\nif (data.topKeywords.length > 0) {\n  emailBody += `## 🏷️ Most Discussed Keywords\\n\\n`;\n  data.topKeywords.forEach((item, idx) => {\n    emailBody += `${idx + 1}. **${item.keyword}** (${item.count} mentions)\\n`;\n  });\n  emailBody += `\\n`;\n}\n\nemailBody += `---\\n\\n*Automated by n8n News Aggregator*`;\n\nreturn [{\n  json: {\n    subject: `📊 Weekly Tech Digest | ${data.stats.fiveStars} Must-Reads | ${weekStart}-${weekEnd}`,\n    body: emailBody\n  }\n}];"
+      },
+      "id": "d4e5f6a7-b8c9-0d1e-2f3a-4b5c6d7e8f9a",
+      "name": "Format Weekly Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        850,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "your-email@example.com",
+        "toEmail": "recipient@example.com",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "text": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "e5f6a7b8-c9d0-1e2f-3a4b-5c6d7e8f9a0b",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1050,
+        300
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "1",
+          "name": "SMTP account"
+        }
+      },
+      "disabled": true
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL - Get Top Articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL - Get Top Articles": {
+      "main": [
+        [
+          {
+            "node": "Analyze Trends",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Trends": {
+      "main": [
+        [
+          {
+            "node": "Format Weekly Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Weekly Email": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-13T00:00:00.000Z",
+  "versionId": "1"
+}
